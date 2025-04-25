@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -13,18 +13,26 @@ import (
 )
 
 func main() {
-	// read the redis configuration from the environment
+	// Read the Redis configuration from the environment
 	redisAddress := os.Getenv("REDIS_ADDRESS")
 	cache := redis.NewClient(&redis.Options{Addr: redisAddress})
-	log.Println("CACHE IS:", cache)
 
-	// create a new shorter service
+	// set up the logger
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	// Create a new shorter service
 	s := &shorter{cache: cache}
 
-	http.HandleFunc("POST /manage", s.Manage)
-	http.HandleFunc("GET /", s.Redirect)
-	log.Println("listening on :8080")
-	http.ListenAndServe(":8080", nil)
+	// Register HTTP handlers
+	http.HandleFunc("/manage", s.Manage)
+	http.HandleFunc("/", s.Redirect)
+
+	slog.Info("server started", "port", "8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		slog.Error("error starting server", "error", err)
+		os.Exit(1)
+	}
+
 }
 
 type shorter struct {
@@ -86,8 +94,13 @@ func cacheKey(shortLink string) string {
 // Redirect handles the /{shortLink} endpoint that redirects users to the
 // long link associated with the short link.
 func (s *shorter) Redirect(w http.ResponseWriter, r *http.Request) {
-	// GET /{shortLink}
 	shortLink := r.URL.Path[1:]
+	// check if the short link is empty
+	if shortLink == "" {
+		http.NotFound(w, r)
+		return
+	}
+
 	// get the long link from the cache
 	longLink, err := s.cache.Get(r.Context(), cacheKey(shortLink)).Result()
 	if err == redis.Nil {
@@ -95,6 +108,7 @@ func (s *shorter) Redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		slog.Error("error getting long link from cache", "error", err, "cache_key", cacheKey(shortLink))
 		return
 	}
 	// redirect the user to the long link
