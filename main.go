@@ -46,7 +46,7 @@ func randomString(length int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
+	return base64.RawURLEncoding.EncodeToString(bytes)[:length], nil
 }
 
 // Manage handles the /manage endpoint that allows users to manage their
