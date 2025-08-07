@@ -1,0 +1,15 @@
+services:
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  shorter:
+    build: .
+    container_name: shorter
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_ADDRESS=valkey:6379
+    depends_on:
+      - valkey
