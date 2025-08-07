@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -13,12 +14,27 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+
+	// set up the logger
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	// Read the Redis configuration from the environment
 	redisAddress := os.Getenv("REDIS_ADDRESS")
 	cache := redis.NewClient(&redis.Options{Addr: redisAddress})
 
-	// set up the logger
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	err := cache.Ping(ctx).Err()
+	if err != nil {
+		slog.Error("error connecting to redis, is REDIS_ADDRESS set?", "error", err, "address", redisAddress)
+		os.Exit(1)
+	} else {
+		slog.Info("connected to redis", "address", redisAddress)
+		defer func() {
+			if err := cache.Close(); err != nil {
+				slog.Error("error closing redis connection", "error", err)
+			}
+		}()
+	}
 
 	// Create a new shorter service
 	s := &shorter{cache: cache}
@@ -62,6 +78,7 @@ func (s *shorter) Manage(w http.ResponseWriter, r *http.Request) {
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			http.Error(w, "bad request could not decode json", http.StatusBadRequest)
+			slog.Error("error decoding JSON request body", "error", err)
 			return
 		}
 
@@ -69,12 +86,14 @@ func (s *shorter) Manage(w http.ResponseWriter, r *http.Request) {
 		shortLink, err := randomString(10)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
+			slog.Error("error generating random string for short link", "error", err)
 			return
 		}
 		// save the short link in the cache
 		err = s.cache.Set(r.Context(), cacheKey(shortLink), req.LongLink, 7*24*time.Hour).Err()
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
+			slog.Error("error saving short link to cache", "error", err, "short_link", shortLink, "long_link", req.LongLink)
 			return
 		}
 		// return the short link to the user
@@ -84,6 +103,8 @@ func (s *shorter) Manage(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(resp)
 		return
 	}
+
+	http.NotFound(w, r)
 }
 
 // construct the redis cache key
